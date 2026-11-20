@@ -1,5 +1,5 @@
 /* Service worker: offline-first for the app shell, so the app works with no internet. */
-const CACHE = 'milim-v2';
+const CACHE = 'milim-v3';
 const SHELL = [
   './', './index.html', './words.js', './manifest.webmanifest',
   './lib/preact.umd.js', './lib/hooks.umd.js', './lib/htm.umd.js',

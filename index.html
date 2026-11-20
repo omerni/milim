@@ -352,7 +352,8 @@
   }
   function deckWords(deck,groups,status,edits,onlyUnknown){
     let arr=deckBaseArr(deck,groups);
-    if(deck.cs && deck.cs>0){ const start=(deck.ci||0)*deck.cs; arr=arr.slice(start,start+deck.cs); }
+    if(deck.filter==='dont') arr=arr.filter(w=>status[w.id]==='dont');
+    else if(deck.cs && deck.cs>0){ const start=(deck.ci||0)*deck.cs; arr=arr.slice(start,start+deck.cs); }
     if(onlyUnknown) arr=arr.filter(w=>status[w.id]!=='know');
     return arr.map(w=>effWord(w,edits));
   }
@@ -385,26 +386,28 @@
 
   /* ============ Flashcards ============ */
   function Flashcards({words,status,setStatus,onEdit,deckLabel,onChangeDeck,chunk,onChunk}){
+    // snapshot the deck for the session so marking a word in a filtered deck doesn't reshuffle/reset mid-pass
+    const [cards,setCards]=useState(()=>words);
     const [i,setI]=useState(0);
     const [flipped,setFlipped]=useState(false);
     const [order,setOrder]=useState(()=>words.map((_,k)=>k));
-    useEffect(()=>{ setOrder(words.map((_,k)=>k)); setI(0); setFlipped(false); },[words.length, deckLabel]);
-    if(!words.length) return html`<${DeckBar} label=${deckLabel} count=0 onChangeDeck=${onChangeDeck} chunk=${chunk} onChunk=${onChunk}/><div class="emptyst"><div class="ic">🃏</div>אין מילים בחפיסה הזו.<br/>בחרו חפיסה אחרת או בטלו את הסינון.</div>`;
+    useEffect(()=>{ setCards(words); setOrder(words.map((_,k)=>k)); setI(0); setFlipped(false); },[deckLabel]);
+    if(!cards.length) return html`<${DeckBar} label=${deckLabel} count=0 onChangeDeck=${onChangeDeck} chunk=${chunk} onChunk=${onChunk}/><div class="emptyst"><div class="ic">🃏</div>אין מילים בחפיסה הזו.<br/>בחרו חפיסה אחרת או בטלו את הסינון.</div>`;
     const idx=order[Math.min(i,order.length-1)];
-    const w=words[idx];
+    const w=cards[idx];
     const st=status[w.id];
-    const go=(d)=>{ setFlipped(false); setTimeout(()=>setI(v=>Math.max(0,Math.min(order.length-1,v+d))),0); };
+    const go=(d)=>{ setFlipped(false); setI(v=>Math.max(0,Math.min(order.length-1,v+d))); };
     const mark=(val)=>{ setStatus(w.id, st===val?null:val); setTimeout(()=>{ if(i<order.length-1) go(1); },120); };
-    const reshuffle=()=>{ setOrder(shuffle(words.map((_,k)=>k))); setI(0); setFlipped(false); };
+    const reshuffle=()=>{ setOrder(shuffle(cards.map((_,k)=>k))); setI(0); setFlipped(false); };
     return html`<${Fragment}>
-      <${DeckBar} label=${deckLabel} count=${words.length} onChangeDeck=${onChangeDeck} chunk=${chunk} onChunk=${onChunk} extra=${html`<button class="btn sm ghost" onClick=${reshuffle}>🔀 ערבוב</button>`}/>
+      <${DeckBar} label=${deckLabel} count=${cards.length} onChangeDeck=${onChangeDeck} chunk=${chunk} onChunk=${onChunk} extra=${html`<button class="btn sm ghost" onClick=${reshuffle}>🔀 ערבוב</button>`}/>
       <div class="row spread" style="margin:14px 2px 10px">
         <span class="muted" style="font-size:12.5px">${i+1} / ${order.length}</span>
         <button class="btn sm ghost" onClick=${()=>onEdit(w)}>✎ עריכה</button>
       </div>
       <div class="progressbar" style="margin-bottom:16px"><i style=${{width:((i+1)/order.length*100)+'%'}}></i></div>
       <div class=${'flip '+(flipped?'flipped':'')} onClick=${()=>setFlipped(f=>!f)}>
-        <div class="flip-inner">
+        <div class="flip-inner" key=${w.id}>
           <div class="face front">
             <span class="klabel">מילה</span>
             <span class=${'statusdot '+(st||'new')}></span>
@@ -737,38 +740,47 @@
     </${Fragment}>`;
   }
 
-  /* ============ Unit sheet (split a unit into batches of 10/20) ============ */
-  function UnitSheet({unit,status,chunkSize,setChunkSize,onStart,onClose}){
+  /* ============ Unit sheet (study whole unit / a batch of 10-20 / only "don't know") ============ */
+  function UnitSheet({unit,status,mode,setMode,batchSize,setBatchSize,onStart,onClose}){
     const all=useMemo(()=>WORDS.filter(w=>w.u===unit),[unit]);
     const [ci,setCi]=useState(0);
-    const size=chunkSize;
-    const count= size? Math.max(1,Math.ceil(all.length/size)) : 1;
-    useEffect(()=>{ if(ci>count-1) setCi(0); },[size,count]);
-    const st=size?ci*size:0, en=size?Math.min(st+size,all.length):all.length;
-    const scope=all.slice(st,en);
+    const size=batchSize;
+    const count=Math.max(1,Math.ceil(all.length/size));
+    useEffect(()=>{ if(ci>count-1) setCi(0); },[size,count,mode]);
+    const dontWords=all.filter(w=>status[w.id]==='dont');
+    let scope, label, deck;
+    if(mode==='batch'){ const a=ci*size,b=Math.min(a+size,all.length); scope=all.slice(a,b); label=`מנה: מילים ${a+1}–${b}`; deck={type:'unit',key:unit,cs:size,ci}; }
+    else if(mode==='dont'){ scope=dontWords; label='רק «לא יודע»'; deck={type:'unit',key:unit,filter:'dont'}; }
+    else { scope=all; label='כל היחידה'; deck={type:'unit',key:unit}; }
     const known=scope.filter(w=>status[w.id]==='know').length;
-    const pickSize=(s)=>{ setChunkSize(s); setCi(0); };
-    const mkDeck=()=>({type:'unit',key:unit,cs:size,ci});
+    const empty=scope.length===0;
+    const MODES=[['all','כל היחידה'],['batch','מנות'],['dont','רק «לא יודע»']];
     return html`<div class="scrim" onClick=${onClose}><div class="sheet" onClick=${e=>e.stopPropagation()}>
       <div class="grab"></div>
       <h3>יחידה ${unit}</h3>
-      <div class="muted" style="font-size:12.5px;margin-bottom:12px">${all.length} מילים ביחידה. אפשר ללמוד הכל בבת אחת, או לחלק למנות קטנות ולעבור מנה-מנה.</div>
-      <div class="sect-title" style="margin-top:2px">גודל מנה</div>
+      <div class="muted" style="font-size:12.5px;margin-bottom:12px">${all.length} מילים ביחידה. בחרו על מה לעבוד — בכרטיסיות או במשחקים.</div>
+      <div class="sect-title" style="margin-top:2px">מצב לימוד</div>
       <div class="seg">
-        ${[[0,'הכל'],[10,'10 מילים'],[20,'20 מילים']].map(([s,l])=>html`<button class=${size===s?'on':''} key=${s} onClick=${()=>pickSize(s)}>${l}</button>`)}
+        ${MODES.map(([m,l])=>html`<button class=${mode===m?'on':''} key=${m} onClick=${()=>setMode(m)}>${l}</button>`)}
       </div>
-      ${size?html`<div class="sect-title">בחרו מנה</div>
+      ${mode==='batch'?html`
+        <div class="sect-title">גודל מנה</div>
+        <div class="seg">
+          ${[[10,'10 מילים'],[20,'20 מילים']].map(([s,l])=>html`<button class=${size===s?'on':''} key=${s} onClick=${()=>{setBatchSize(s);setCi(0);}}>${l}</button>`)}
+        </div>
+        <div class="sect-title">בחרו מנה</div>
         <div class="chips">
           ${Array.from({length:count},(_,k)=>{ const a=k*size,b=Math.min(a+size,all.length); const part=all.slice(a,b); const kn=part.filter(w=>status[w.id]==='know').length;
             return html`<button class=${'chip '+(ci===k?'on':'')} key=${k} onClick=${()=>setCi(k)}>${a+1}–${b} <span class="cnt">${kn}/${part.length}</span></button>`; })}
         </div>`:''}
+      ${mode==='dont'?html`<div class="muted" style="font-size:12.5px;margin:10px 2px 0">${dontWords.length? `${dontWords.length} מילים שסימנת «לא יודע» ביחידה הזו.` : 'אין עדיין מילים מסומנות «לא יודע» ביחידה הזו. סמנו מילים כ«לא יודע» בכרטיסיות, והן יופיעו כאן.'}</div>`:''}
       <div class="card pad row spread" style="margin-top:14px">
-        <span class="muted" style="font-size:13px">${size?`מנה נבחרת: מילים ${st+1}–${en}`:'כל היחידה'}</span>
-        <b style="font-variant-numeric:tabular-nums">${known}/${scope.length} ידוע</b>
+        <span class="muted" style="font-size:13px">${label}</span>
+        <b style="font-variant-numeric:tabular-nums">${empty?'0 מילים':`${known}/${scope.length} ידוע`}</b>
       </div>
       <div class="grid2" style="margin-top:14px">
-        <button class="btn lg primary" onClick=${()=>onStart(mkDeck(),'cards')}>🃏 כרטיסיות</button>
-        <button class="btn lg" onClick=${()=>onStart(mkDeck(),'games')}>🎮 משחקים</button>
+        <button class="btn lg primary" disabled=${empty} onClick=${()=>onStart(deck,'cards')}>🃏 כרטיסיות</button>
+        <button class="btn lg" disabled=${empty} onClick=${()=>onStart(deck,'games')}>🎮 משחקים</button>
       </div>
       <button class="btn block ghost" style="margin-top:10px" onClick=${onClose}>ביטול</button>
     </div></div>`;
@@ -802,7 +814,7 @@
       </div>
 
       <div class="sect-title">למידה לפי יחידה</div>
-      <div class="muted" style="font-size:12px;margin:-4px 2px 10px">בחרו יחידה כדי ללמוד אותה בחלקים של 10 או 20 מילים.</div>
+      <div class="muted" style="font-size:12px;margin:-4px 2px 10px">בחרו יחידה — ללמוד את כולה, מנה מסוימת, או רק את המילים שסימנתם «לא יודע».</div>
       <div class="chips">
         ${UNITS.map(u=>{ const arr=WORDS.filter(w=>w.u===u); const k=arr.filter(w=>status[w.id]==='know').length;
           return html`<button class="chip" key=${u} onClick=${()=>setUnitSheet(u)}>יחידה ${u} <span class="cnt">${k}/${arr.length}</span></button>`; })}
@@ -883,8 +895,10 @@
     const [toastMsg,setToastMsg]=useState(null);
     const [showSettings,setShowSettings]=useState(false);
     const [unitSheet,setUnitSheet]=useState(null);
-    const [chunkSize,setChunkSizeState]=useState(()=>{ try{ const v=parseInt(localStorage.getItem('milim_chunk'),10); return [0,10,20].indexOf(v)>=0?v:20; }catch(e){ return 20; } });
-    const setChunkSize=useCallback((s)=>{ setChunkSizeState(s); try{ localStorage.setItem('milim_chunk',String(s)); }catch(e){} },[]);
+    const [studyMode,setStudyModeState]=useState(()=>{ try{ const v=localStorage.getItem('milim_smode'); return ['all','batch','dont'].indexOf(v)>=0?v:'batch'; }catch(e){ return 'batch'; } });
+    const setStudyMode=useCallback((m)=>{ setStudyModeState(m); try{ localStorage.setItem('milim_smode',m); }catch(e){} },[]);
+    const [batchSize,setBatchSizeState]=useState(()=>{ try{ const v=parseInt(localStorage.getItem('milim_batch'),10); return [10,20].indexOf(v)>=0?v:20; }catch(e){ return 20; } });
+    const setBatchSize=useCallback((s)=>{ setBatchSizeState(s); try{ localStorage.setItem('milim_batch',String(s)); }catch(e){} },[]);
     const [theme,setThemeState]=useState(()=>{ try{return localStorage.getItem('milim_theme')||null;}catch(e){return null;} });
     useEffect(()=>{ const r=document.documentElement; if(theme) r.setAttribute('data-theme',theme); else r.removeAttribute('data-theme'); try{ theme?localStorage.setItem('milim_theme',theme):localStorage.removeItem('milim_theme'); }catch(e){} },[theme]);
     const toast=useCallback((m)=>{ setToastMsg(m); setTimeout(()=>setToastMsg(null),1600); },[]);
@@ -904,10 +918,12 @@
       const ci=Math.min(deck.ci||0,count-1); const start=ci*size; const end=Math.min(start+size,total);
       return {size,count,ci,start,end,total}; },[deck,state.groups]);
     const navChunk=useCallback((dir)=>{ setDeck(d=>{ if(!d.cs) return d; const total=deckBaseArr(d,state.groups).length; const count=Math.max(1,Math.ceil(total/d.cs)); const ni=Math.min(Math.max(0,(d.ci||0)+dir),count-1); return Object.assign({},d,{ci:ni}); }); },[state.groups]);
-    const dLabel=deckName(deck,state.groups)+(chunkMeta?` · מילים ${chunkMeta.start+1}–${chunkMeta.end}`:'')+(onlyUnknown?' · לא ידעתי':'');
+    const dLabel=deckName(deck,state.groups)+(chunkMeta?` · מילים ${chunkMeta.start+1}–${chunkMeta.end}`:'')+(deck.filter==='dont'?' · רק «לא יודע»':'')+(onlyUnknown?' · לא ידעתי':'');
 
     const openDeck=()=>setShowDeck(true);
-    const pickDeck=(sel)=>{ if(sel.toggleUnknown){ setOnlyUnknown(u=>!u); return; } if(sel.type==='unit'){ setDeck({type:'unit',key:sel.key,cs:chunkSize,ci:0}); } else setDeck(sel); };
+    const pickDeck=(sel)=>{ if(sel.toggleUnknown){ setOnlyUnknown(u=>!u); return; }
+      if(sel.type==='unit'){ setDeck(studyMode==='dont'?{type:'unit',key:sel.key,filter:'dont'}:studyMode==='batch'?{type:'unit',key:sel.key,cs:batchSize,ci:0}:{type:'unit',key:sel.key}); return; }
+      setDeck(sel); };
 
     let body;
     if(view==='home') body=html`<${Home} status=${state.status} groups=${state.groups} setView=${setView} setDeckStudy=${setDeckStudy} setUnitSheet=${setUnitSheet}/>`;
@@ -925,7 +941,7 @@
       ${showDeck?html`<${DeckSheet} deck=${deck} onlyUnknown=${onlyUnknown} groups=${state.groups} status=${state.status} onClose=${()=>setShowDeck(false)} onPick=${pickDeck}/>`:''}
       ${editWord?html`<${EditSheet} word=${effWord(editWord,state.edits)} isEdited=${!!state.edits[editWord.id]} onClose=${()=>setEditWord(null)} onSave=${(w,m)=>saveEdit(editWord.id,w,m)} onReset=${()=>resetEdit(editWord.id)}/>`:''}
       ${showSettings?html`<${SettingsSheet} state=${state} onReplace=${replaceAll} onClose=${()=>setShowSettings(false)} toast=${toast}/>`:''}
-      ${unitSheet!=null?html`<${UnitSheet} unit=${unitSheet} status=${state.status} chunkSize=${chunkSize} setChunkSize=${setChunkSize} onStart=${startUnit} onClose=${()=>setUnitSheet(null)}/>`:''}
+      ${unitSheet!=null?html`<${UnitSheet} unit=${unitSheet} status=${state.status} mode=${studyMode} setMode=${setStudyMode} batchSize=${batchSize} setBatchSize=${setBatchSize} onStart=${startUnit} onClose=${()=>setUnitSheet(null)}/>`:''}
       <${Toast} msg=${toastMsg}/>
     </${Fragment}>`;
   }
