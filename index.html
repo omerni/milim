@@ -345,10 +345,14 @@
     </div></div>`;
   }
 
+  function deckBaseArr(deck,groups){
+    if(deck.type==='unit') return WORDS.filter(w=>w.u===deck.key);
+    if(deck.type==='group'){ const g=groups.find(x=>x.id===deck.key); const set=new Set(g?g.ids:[]); return WORDS.filter(w=>set.has(w.id)); }
+    return WORDS;
+  }
   function deckWords(deck,groups,status,edits,onlyUnknown){
-    let arr=WORDS;
-    if(deck.type==='unit') arr=WORDS.filter(w=>w.u===deck.key);
-    else if(deck.type==='group'){ const g=groups.find(x=>x.id===deck.key); const set=new Set(g?g.ids:[]); arr=WORDS.filter(w=>set.has(w.id)); }
+    let arr=deckBaseArr(deck,groups);
+    if(deck.cs && deck.cs>0){ const start=(deck.ci||0)*deck.cs; arr=arr.slice(start,start+deck.cs); }
     if(onlyUnknown) arr=arr.filter(w=>status[w.id]!=='know');
     return arr.map(w=>effWord(w,edits));
   }
@@ -380,12 +384,12 @@
   }
 
   /* ============ Flashcards ============ */
-  function Flashcards({words,status,setStatus,onEdit,deckLabel,onChangeDeck}){
+  function Flashcards({words,status,setStatus,onEdit,deckLabel,onChangeDeck,chunk,onChunk}){
     const [i,setI]=useState(0);
     const [flipped,setFlipped]=useState(false);
     const [order,setOrder]=useState(()=>words.map((_,k)=>k));
     useEffect(()=>{ setOrder(words.map((_,k)=>k)); setI(0); setFlipped(false); },[words.length, deckLabel]);
-    if(!words.length) return html`<${DeckBar} label=${deckLabel} count=0 onChangeDeck=${onChangeDeck}/><div class="emptyst"><div class="ic">🃏</div>אין מילים בחפיסה הזו.<br/>בחרו חפיסה אחרת או בטלו את הסינון.</div>`;
+    if(!words.length) return html`<${DeckBar} label=${deckLabel} count=0 onChangeDeck=${onChangeDeck} chunk=${chunk} onChunk=${onChunk}/><div class="emptyst"><div class="ic">🃏</div>אין מילים בחפיסה הזו.<br/>בחרו חפיסה אחרת או בטלו את הסינון.</div>`;
     const idx=order[Math.min(i,order.length-1)];
     const w=words[idx];
     const st=status[w.id];
@@ -393,7 +397,7 @@
     const mark=(val)=>{ setStatus(w.id, st===val?null:val); setTimeout(()=>{ if(i<order.length-1) go(1); },120); };
     const reshuffle=()=>{ setOrder(shuffle(words.map((_,k)=>k))); setI(0); setFlipped(false); };
     return html`<${Fragment}>
-      <${DeckBar} label=${deckLabel} count=${words.length} onChangeDeck=${onChangeDeck} extra=${html`<button class="btn sm ghost" onClick=${reshuffle}>🔀 ערבוב</button>`}/>
+      <${DeckBar} label=${deckLabel} count=${words.length} onChangeDeck=${onChangeDeck} chunk=${chunk} onChunk=${onChunk} extra=${html`<button class="btn sm ghost" onClick=${reshuffle}>🔀 ערבוב</button>`}/>
       <div class="row spread" style="margin:14px 2px 10px">
         <span class="muted" style="font-size:12.5px">${i+1} / ${order.length}</span>
         <button class="btn sm ghost" onClick=${()=>onEdit(w)}>✎ עריכה</button>
@@ -426,10 +430,17 @@
       </div>
     </${Fragment}>`;
   }
-  function DeckBar({label,count,onChangeDeck,extra}){
-    return html`<div class="deckbar">
-      <div><div class="nm">${label}</div><div class="mt">${count} מילים</div></div>
-      <div class="row" style="gap:7px">${extra}<button class="btn sm" onClick=${onChangeDeck}>החלפה</button></div>
+  function DeckBar({label,count,onChangeDeck,extra,chunk,onChunk}){
+    return html`<div class="deckbar" style="flex-direction:column;align-items:stretch;gap:9px">
+      <div class="row spread">
+        <div><div class="nm">${label}</div><div class="mt">${count} מילים${chunk?` · מנה ${chunk.ci+1}/${chunk.count}`:''}</div></div>
+        <div class="row" style="gap:7px">${extra}<button class="btn sm" onClick=${onChangeDeck}>החלפה</button></div>
+      </div>
+      ${chunk&&chunk.count>1?html`<div class="row" style="gap:8px">
+        <button class="btn sm" style="flex:1" onClick=${()=>onChunk(-1)} disabled=${chunk.ci===0}>→ מנה קודמת</button>
+        <span class="mt" style="white-space:nowrap;align-self:center">מילים ${chunk.start+1}–${chunk.end}</span>
+        <button class="btn sm" style="flex:1" onClick=${()=>onChunk(1)} disabled=${chunk.ci>=chunk.count-1}>מנה הבאה ←</button>
+      </div>`:''}
     </div>`;
   }
 
@@ -443,9 +454,9 @@
     {k:'letters',name:'אות חסרה',emoji:'🔡',desc:'השלימו את האות'},
     {k:'race',name:'מרוץ 60 שניות',emoji:'⏱️',desc:'כמה שיותר, מהר'},
   ];
-  function GamesMenu({onPlay,stats,deckLabel,onChangeDeck,count}){
+  function GamesMenu({onPlay,stats,deckLabel,onChangeDeck,count,chunk,onChunk}){
     return html`<${Fragment}>
-      <${DeckBar} label=${deckLabel} count=${count} onChangeDeck=${onChangeDeck}/>
+      <${DeckBar} label=${deckLabel} count=${count} onChangeDeck=${onChangeDeck} chunk=${chunk} onChunk=${onChunk}/>
       ${count<4?html`<div class="emptyst" style="padding-top:28px"><div class="ic">🎲</div>צריך לפחות 4 מילים בחפיסה כדי לשחק.</div>`:html`
       <div class="sect-title">בחרו משחק</div>
       <div class="stack">
@@ -726,8 +737,45 @@
     </${Fragment}>`;
   }
 
+  /* ============ Unit sheet (split a unit into batches of 10/20) ============ */
+  function UnitSheet({unit,status,chunkSize,setChunkSize,onStart,onClose}){
+    const all=useMemo(()=>WORDS.filter(w=>w.u===unit),[unit]);
+    const [ci,setCi]=useState(0);
+    const size=chunkSize;
+    const count= size? Math.max(1,Math.ceil(all.length/size)) : 1;
+    useEffect(()=>{ if(ci>count-1) setCi(0); },[size,count]);
+    const st=size?ci*size:0, en=size?Math.min(st+size,all.length):all.length;
+    const scope=all.slice(st,en);
+    const known=scope.filter(w=>status[w.id]==='know').length;
+    const pickSize=(s)=>{ setChunkSize(s); setCi(0); };
+    const mkDeck=()=>({type:'unit',key:unit,cs:size,ci});
+    return html`<div class="scrim" onClick=${onClose}><div class="sheet" onClick=${e=>e.stopPropagation()}>
+      <div class="grab"></div>
+      <h3>יחידה ${unit}</h3>
+      <div class="muted" style="font-size:12.5px;margin-bottom:12px">${all.length} מילים ביחידה. אפשר ללמוד הכל בבת אחת, או לחלק למנות קטנות ולעבור מנה-מנה.</div>
+      <div class="sect-title" style="margin-top:2px">גודל מנה</div>
+      <div class="seg">
+        ${[[0,'הכל'],[10,'10 מילים'],[20,'20 מילים']].map(([s,l])=>html`<button class=${size===s?'on':''} key=${s} onClick=${()=>pickSize(s)}>${l}</button>`)}
+      </div>
+      ${size?html`<div class="sect-title">בחרו מנה</div>
+        <div class="chips">
+          ${Array.from({length:count},(_,k)=>{ const a=k*size,b=Math.min(a+size,all.length); const part=all.slice(a,b); const kn=part.filter(w=>status[w.id]==='know').length;
+            return html`<button class=${'chip '+(ci===k?'on':'')} key=${k} onClick=${()=>setCi(k)}>${a+1}–${b} <span class="cnt">${kn}/${part.length}</span></button>`; })}
+        </div>`:''}
+      <div class="card pad row spread" style="margin-top:14px">
+        <span class="muted" style="font-size:13px">${size?`מנה נבחרת: מילים ${st+1}–${en}`:'כל היחידה'}</span>
+        <b style="font-variant-numeric:tabular-nums">${known}/${scope.length} ידוע</b>
+      </div>
+      <div class="grid2" style="margin-top:14px">
+        <button class="btn lg primary" onClick=${()=>onStart(mkDeck(),'cards')}>🃏 כרטיסיות</button>
+        <button class="btn lg" onClick=${()=>onStart(mkDeck(),'games')}>🎮 משחקים</button>
+      </div>
+      <button class="btn block ghost" style="margin-top:10px" onClick=${onClose}>ביטול</button>
+    </div></div>`;
+  }
+
   /* ============ Home ============ */
-  function Home({status,groups,setView,setDeckStudy}){
+  function Home({status,groups,setView,setDeckStudy,setUnitSheet}){
     const total=WORDS.length;
     const known=WORDS.filter(w=>status[w.id]==='know').length;
     const dont=WORDS.filter(w=>status[w.id]==='dont').length;
@@ -754,9 +802,10 @@
       </div>
 
       <div class="sect-title">למידה לפי יחידה</div>
+      <div class="muted" style="font-size:12px;margin:-4px 2px 10px">בחרו יחידה כדי ללמוד אותה בחלקים של 10 או 20 מילים.</div>
       <div class="chips">
         ${UNITS.map(u=>{ const arr=WORDS.filter(w=>w.u===u); const k=arr.filter(w=>status[w.id]==='know').length;
-          return html`<button class="chip" key=${u} onClick=${()=>setDeckStudy({type:'unit',key:u},'cards')}>יחידה ${u} <span class="cnt">${k}/${arr.length}</span></button>`; })}
+          return html`<button class="chip" key=${u} onClick=${()=>setUnitSheet(u)}>יחידה ${u} <span class="cnt">${k}/${arr.length}</span></button>`; })}
       </div>
 
       <div class="sect-title">קיצורי דרך</div>
@@ -833,6 +882,9 @@
     const [game,setGame]=useState(null);
     const [toastMsg,setToastMsg]=useState(null);
     const [showSettings,setShowSettings]=useState(false);
+    const [unitSheet,setUnitSheet]=useState(null);
+    const [chunkSize,setChunkSizeState]=useState(()=>{ try{ const v=parseInt(localStorage.getItem('milim_chunk'),10); return [0,10,20].indexOf(v)>=0?v:20; }catch(e){ return 20; } });
+    const setChunkSize=useCallback((s)=>{ setChunkSizeState(s); try{ localStorage.setItem('milim_chunk',String(s)); }catch(e){} },[]);
     const [theme,setThemeState]=useState(()=>{ try{return localStorage.getItem('milim_theme')||null;}catch(e){return null;} });
     useEffect(()=>{ const r=document.documentElement; if(theme) r.setAttribute('data-theme',theme); else r.removeAttribute('data-theme'); try{ theme?localStorage.setItem('milim_theme',theme):localStorage.removeItem('milim_theme'); }catch(e){} },[theme]);
     const toast=useCallback((m)=>{ setToastMsg(m); setTimeout(()=>setToastMsg(null),1600); },[]);
@@ -845,17 +897,23 @@
     const saveScore=useCallback((gameKey,score,exit)=>{ if(!exit){ commit(s=>{ const st=Object.assign({},s.stats); const cur=st[gameKey]||{}; const isTime=gameKey==='match'; const best = cur.best==null?score:(isTime?Math.min(cur.best,score):Math.max(cur.best,score)); st[gameKey]=Object.assign({},cur,{best,plays:(cur.plays||0)+1}); return Object.assign({},s,{stats:st}); }); } else { setGame(null); } },[commit]);
 
     const setDeckStudy=useCallback((d,go,unk)=>{ setDeck(d); setOnlyUnknown(!!unk); setGame(null); setView(go==='games'?'games':'cards'); },[]);
+    const startUnit=useCallback((d,go)=>{ setDeck(d); setOnlyUnknown(false); setGame(null); setUnitSheet(null); setView(go==='games'?'games':'cards'); },[]);
     const words=useMemo(()=>deckWords(deck,state.groups,state.status,state.edits,onlyUnknown),[deck,state.groups,state.status,state.edits,onlyUnknown]);
-    const dLabel=deckName(deck,state.groups)+(onlyUnknown?' · לא ידעתי':'');
+    const chunkMeta=useMemo(()=>{ if(!deck.cs) return null;
+      const total=deckBaseArr(deck,state.groups).length; const size=deck.cs; const count=Math.max(1,Math.ceil(total/size));
+      const ci=Math.min(deck.ci||0,count-1); const start=ci*size; const end=Math.min(start+size,total);
+      return {size,count,ci,start,end,total}; },[deck,state.groups]);
+    const navChunk=useCallback((dir)=>{ setDeck(d=>{ if(!d.cs) return d; const total=deckBaseArr(d,state.groups).length; const count=Math.max(1,Math.ceil(total/d.cs)); const ni=Math.min(Math.max(0,(d.ci||0)+dir),count-1); return Object.assign({},d,{ci:ni}); }); },[state.groups]);
+    const dLabel=deckName(deck,state.groups)+(chunkMeta?` · מילים ${chunkMeta.start+1}–${chunkMeta.end}`:'')+(onlyUnknown?' · לא ידעתי':'');
 
     const openDeck=()=>setShowDeck(true);
-    const pickDeck=(sel)=>{ if(sel.toggleUnknown){ setOnlyUnknown(u=>!u); return; } setDeck(sel); };
+    const pickDeck=(sel)=>{ if(sel.toggleUnknown){ setOnlyUnknown(u=>!u); return; } if(sel.type==='unit'){ setDeck({type:'unit',key:sel.key,cs:chunkSize,ci:0}); } else setDeck(sel); };
 
     let body;
-    if(view==='home') body=html`<${Home} status=${state.status} groups=${state.groups} setView=${setView} setDeckStudy=${setDeckStudy}/>`;
-    else if(view==='cards') body=html`<div class="page"><${Flashcards} words=${words} status=${state.status} setStatus=${setStatus} onEdit=${w=>setEditWord(w)} deckLabel=${dLabel} onChangeDeck=${openDeck}/></div>`;
+    if(view==='home') body=html`<${Home} status=${state.status} groups=${state.groups} setView=${setView} setDeckStudy=${setDeckStudy} setUnitSheet=${setUnitSheet}/>`;
+    else if(view==='cards') body=html`<div class="page"><${Flashcards} words=${words} status=${state.status} setStatus=${setStatus} onEdit=${w=>setEditWord(w)} deckLabel=${dLabel} onChangeDeck=${openDeck} chunk=${chunkMeta} onChunk=${navChunk}/></div>`;
     else if(view==='games') body=html`<div class="page">${game? html`<${GameHost} gameKey=${game} words=${words} onExit=${()=>setGame(null)} onScore=${saveScore} best=${state.stats[game]?state.stats[game].best:null}/>`
-        : html`<${GamesMenu} onPlay=${k=>setGame(k)} stats=${state.stats} deckLabel=${dLabel} onChangeDeck=${openDeck} count=${words.length}/>`}</div>`;
+        : html`<${GamesMenu} onPlay=${k=>setGame(k)} stats=${state.stats} deckLabel=${dLabel} onChangeDeck=${openDeck} count=${words.length} chunk=${chunkMeta} onChunk=${navChunk}/>`}</div>`;
     else if(view==='groups') body=html`<div class="page"><${Groups} groups=${state.groups} setGroups=${setGroups} status=${state.status} edits=${state.edits} onStudy=${setDeckStudy} toast=${toast}/></div>`;
     else if(view==='words') body=html`<div class="page"><${WordList} status=${state.status} setStatus=${setStatus} edits=${state.edits} onEdit=${w=>setEditWord(w)} toast=${toast}/></div>`;
 
@@ -867,6 +925,7 @@
       ${showDeck?html`<${DeckSheet} deck=${deck} onlyUnknown=${onlyUnknown} groups=${state.groups} status=${state.status} onClose=${()=>setShowDeck(false)} onPick=${pickDeck}/>`:''}
       ${editWord?html`<${EditSheet} word=${effWord(editWord,state.edits)} isEdited=${!!state.edits[editWord.id]} onClose=${()=>setEditWord(null)} onSave=${(w,m)=>saveEdit(editWord.id,w,m)} onReset=${()=>resetEdit(editWord.id)}/>`:''}
       ${showSettings?html`<${SettingsSheet} state=${state} onReplace=${replaceAll} onClose=${()=>setShowSettings(false)} toast=${toast}/>`:''}
+      ${unitSheet!=null?html`<${UnitSheet} unit=${unitSheet} status=${state.status} chunkSize=${chunkSize} setChunkSize=${setChunkSize} onStart=${startUnit} onClose=${()=>setUnitSheet(null)}/>`:''}
       <${Toast} msg=${toastMsg}/>
     </${Fragment}>`;
   }
