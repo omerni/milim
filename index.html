@@ -340,7 +340,7 @@
       ${groups.length? html`<div class="chips">${groups.map(g=>html`<button class=${'chip '+(deck.type==='group'&&deck.key===g.id?'on':'')} onClick=${()=>onPick({type:'group',key:g.id})}>${g.name} <span class="cnt">${g.ids.length}</span></button>`)}</div>`
         : html`<div class="muted" style="font-size:13px">עדיין אין קבוצות. אפשר ליצור בלשונית «קבוצות».</div>`}
       <div class="sect-title">סינון</div>
-      <button class=${'chip '+(onlyUnknown?'on':'')} onClick=${()=>onPick({toggleUnknown:true})}>${onlyUnknown?'✓ ':''}רק מילים שלא ידעתי</button>
+      <button class=${'chip '+(onlyUnknown?'on':'')} onClick=${()=>onPick({toggleUnknown:true})}>${onlyUnknown?'✓ ':''}רק מילים שסימנתי «לא יודע»</button>
       <button class="btn block primary" style="margin-top:16px" onClick=${onClose}>סיום</button>
     </div></div>`;
   }
@@ -354,7 +354,7 @@
     let arr=deckBaseArr(deck,groups);
     if(deck.filter==='dont') arr=arr.filter(w=>status[w.id]==='dont');
     else if(deck.cs && deck.cs>0){ const start=(deck.ci||0)*deck.cs; arr=arr.slice(start,start+deck.cs); }
-    if(onlyUnknown) arr=arr.filter(w=>status[w.id]!=='know');
+    if(onlyUnknown) arr=arr.filter(w=>status[w.id]==='dont'); // "רק לא יודע" = מסומנות dont בלבד (לא כולל מדולגות/טרם-נלמד)
     return arr.map(w=>effWord(w,edits));
   }
   function deckName(deck,groups){
@@ -810,7 +810,7 @@
 
       <div class="grid2" style="margin-top:14px">
         <button class="btn lg primary" onClick=${()=>setDeckStudy({type:'all'},'cards')}>🃏 תרגול הכל</button>
-        <button class="btn lg" onClick=${()=>setDeckStudy({type:'all'},'cards',true)}>🎯 רק לא ידעתי</button>
+        <button class="btn lg" onClick=${()=>setDeckStudy({type:'all'},'cards',true)}>🎯 רק «לא יודע»</button>
       </div>
 
       <div class="sect-title">למידה לפי יחידה</div>
@@ -918,7 +918,7 @@
       const ci=Math.min(deck.ci||0,count-1); const start=ci*size; const end=Math.min(start+size,total);
       return {size,count,ci,start,end,total}; },[deck,state.groups]);
     const navChunk=useCallback((dir)=>{ setDeck(d=>{ if(!d.cs) return d; const total=deckBaseArr(d,state.groups).length; const count=Math.max(1,Math.ceil(total/d.cs)); const ni=Math.min(Math.max(0,(d.ci||0)+dir),count-1); return Object.assign({},d,{ci:ni}); }); },[state.groups]);
-    const dLabel=deckName(deck,state.groups)+(chunkMeta?` · מילים ${chunkMeta.start+1}–${chunkMeta.end}`:'')+(deck.filter==='dont'?' · רק «לא יודע»':'')+(onlyUnknown?' · לא ידעתי':'');
+    const dLabel=deckName(deck,state.groups)+(chunkMeta?` · מילים ${chunkMeta.start+1}–${chunkMeta.end}`:'')+((deck.filter==='dont'||onlyUnknown)?' · רק «לא יודע»':'');
 
     const openDeck=()=>setShowDeck(true);
     const pickDeck=(sel)=>{ if(sel.toggleUnknown){ setOnlyUnknown(u=>!u); return; }
