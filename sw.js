@@ -1,5 +1,5 @@
 /* Service worker: offline-first for the app shell, so the app works with no internet. */
-const CACHE = 'milim-v4';
+const CACHE = 'milim-v5'; // keep in sync with BUILD.v in index.html — bump both on every deploy
 const SHELL = [
   './', './index.html', './words.js', './manifest.webmanifest',
   './lib/preact.umd.js', './lib/hooks.umd.js', './lib/htm.umd.js',

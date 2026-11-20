@@ -252,6 +252,7 @@
   const UNITS = [...new Set(WORDS.map(w=>w.u))].filter(u=>u!=null).sort((a,b)=>a-b);
   const SESSION = Math.random().toString(36).slice(2);
   const STL = {know:'יודע',dont:'לא יודע',seen:'נבדק'};
+  const BUILD = { v: 5, date: '20.11.2026 20:41' }; // bump on every deploy (keep in sync with sw.js CACHE)
 
   const stripN = s => (s||'').normalize('NFC').replace(/[֑-ׇ]/g,'');
   const normType = s => stripN(s).replace(/[\s'"־\-\/\.\,\(\)]/g,'');
@@ -879,6 +880,10 @@
       ${err?html`<div style="color:var(--dont);font-size:13px;margin-top:10px">${err}</div>`:''}
       <div class="muted" style="font-size:11.5px;margin-top:12px">שחזור יחליף את כל ההתקדמות, הקבוצות והתיקונים שבמכשיר זה.</div>
       <div class="card pad" style="margin-top:14px;font-size:12.5px;color:var(--muted)">במכשיר זה: ${WORDS.length} מילים · ${known} מסומנות «יודע» · ${state.groups.length} קבוצות</div>
+      <div class="card pad row spread" style="margin-top:10px;font-size:12.5px">
+        <span class="muted">עודכן לאחרונה</span>
+        <b style="font-variant-numeric:tabular-nums">${BUILD.date} · גרסה ${BUILD.v}</b>
+      </div>
       <button class="btn block" style="margin-top:14px" onClick=${onClose}>סגירה</button>
     </div></div>`;
   }
